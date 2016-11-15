@@ -1,6 +1,7 @@
 ﻿$ErrorActionPreference = 'Stop'
 Import-Module $PSScriptRoot\build.psm1
 $repoRoot = Get-RepositoryRoot
+[System.Collections.ArrayList] $script:artifacts = [System.Collections.ArrayList]::new()
 
 # Sets a build variable
 Function Set-BuildVariable
@@ -65,10 +66,10 @@ function Invoke-AppVeyorFull
 # Implements the AppVeyor 'build_script' step
 function Invoke-AppVeyorBuild
 {  
-      Start-SSHBuild -Configuration Release -NativeHostArch x64
-      Start-SSHBuild -Configuration Debug -NativeHostArch x64
-      Start-SSHBuild -Configuration Release -NativeHostArch x86
-      Start-SSHBuild -Configuration Debug -NativeHostArch x86
+      Start-SSHBuild -Configuration Release -NativeHostArch x64 -Verbose
+      Start-SSHBuild -Configuration Debug -NativeHostArch x64 -Verbose
+      Start-SSHBuild -Configuration Release -NativeHostArch x86 -Verbose
+      Start-SSHBuild -Configuration Debug -NativeHostArch x86 -Verbose
 }
 
 <#
@@ -82,24 +83,112 @@ function Install-TestDependencies
     [CmdletBinding()]
     param ()
     
-    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-    
     $isModuleAvailable = Get-Module 'Pester' -ListAvailable
     if (-not ($isModuleAvailable))
     {
       Write-Verbose 'Installing Pester...'
-      Install-Module -Name 'Pester' -Repository PSGallery -Force -Verbose
+      choco install Pester -y --force
     }    
 }
+<#
+    .Synopsis
+    Deploy all required files to a test location.
+#>
+function Install-OpenSSH
+{
+    [CmdletBinding()]
+    param
+    (    
+        [string] $OpenSSHDir = "$env:SystemDrive\OpenSSH",
 
+        [ValidateSet('Debug', 'Release')]
+        [string]$Configuration = "Debug"
+    )
 
+    Build-Win32OpenSSHPackage @PSBoundParameters
+
+    Push-Location $OpenSSHDir 
+    &( "$OpenSSHDir\install-sshd.ps1")
+    ssh-keygen.exe -A
+    Start-Service ssh-agent
+    &( "$OpenSSHDir\install-sshlsa.ps1")
+
+    Set-Service sshd -StartupType Automatic 
+    Set-Service ssh-agent -StartupType Automatic     
+}
+<#
+    .Synopsis
+    Deploy all required files to build a package and create zip file.
+#>
+function Build-Win32OpenSSHPackage
+{
+    [CmdletBinding()]
+    param
+    (    
+        [string] $OpenSSHDir = "$env:SystemDrive\OpenSSH",
+
+        [ValidateSet('Debug', 'Release')]
+        [string]$Configuration = "Debug"
+    )
+
+    if (-not (Test-Path -Path $OpenSSHTestDir -PathType Container))
+    {
+        New-Item -Path $OpenSSHTestDir -ItemType Directory -Force -ErrorAction Stop
+    }
+
+    [string] $platform = $env:PROCESSOR_ARCHITECTURE
+    $folderName = "Win32"
+    if($platform -ieq "AMD64")
+    {
+        $folderName = "x64"
+    }
+
+    [System.IO.DirectoryInfo] $repositoryRoot = Get-RepositoryRoot
+    $sourceDir = Join-Path $repositoryRoot.FullName -ChildPath "bin\$folderName\$Configuration"
+    Copy-Item -Path "$sourceDir\*" -Destination $OpenSSHTestDir -Include *.exe,*.dll,*pdb -Force -ErrorAction Stop
+    $sourceDir = Join-Path $repositoryRoot.FullName -ChildPath "contrib\win32\openssh"
+    Copy-Item -Path "$sourceDir\*" -Destination $OpenSSHTestDir -Include *.ps1,sshd_config -Exclude AnalyzeCodeDiff.ps1 -Force -ErrorAction Stop    
+    Copy-Item -Path "$($repositoryRoot.FullName)\sshd_config" -Destination $OpenSSHTestDir -Force -ErrorAction Stop
+
+    $packageName = "rktools.2003"
+    $rktoolsPath = "${env:ProgramFiles(x86)}\Windows Resource Kits\Tools\ntrights.exe"
+    if (-not (Test-Path -Path $rktoolsPath))
+    {
+        Write-Information -MessageData "$rktoolsPath not present. Installing $rktoolsPath."        
+        choco install $rktoolsPath -y --force
+    }
+
+    Copy-Item -Path $rktoolsPath -Destination $OpenSSHTestDir -Force -ErrorAction Stop
+
+    $package = "$env:APPVEYOR_BUILD_FOLDER\Win32OpenSSH$Configuration$folderName.zip"
+    Remove-Item -Path $package -Force -ErrorAction SilentlyContinue
+
+    Add-Type -assemblyname System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($OpenSSHDir, $package)
+    $null = $script:artifacts.Add($package)    
+}
 
 <#
     .Synopsis
     After build and test run completes, upload all artifacts from the build machine.
 #>
-function Install-OpenSSH
+function Deploy-OpenSSHTests
 {
+    [CmdletBinding()]
+    param
+    (    
+        [string] $OpenSSHTestDir = "$env:SystemDrive\OpenSSH"
+    )
+
+    if (-not (Test-Path -Path $OpenSSHTestDir -PathType Container))
+    {
+        New-Item -Path $OpenSSHTestDir -ItemType Directory -Force -ErrorAction Stop
+    }
+
+    [System.IO.DirectoryInfo] $repositoryRoot = Get-RepositoryRoot    
+    
+    $sourceDir = Join-Path $repositoryRoot.FullName -ChildPath "regress\pesterTests"
+    Copy-Item -Path "$sourceDir\*" -Destination $OpenSSHTestDir -Include *.ps1,*.psm1 -Force -ErrorAction Stop
 }
 
 
@@ -113,9 +202,7 @@ function Install-OpenSSH
     .Parameter artifacts
     An array list to add the fully qualified build log path
     .Parameter buildLog
-    The build log file produced by the build.
-    .Parameter buildRuntime
-    The CLR runtime for the build.
+    The build log file produced by the build.    
 #>
 function Add-BuildLog
 {
@@ -139,37 +226,6 @@ function Add-BuildLog
     }
 }
 
-<#
-    .Synopsis
-    Publishes test artifacts for the build.
-    .Description
-    Creates a zip file containing the AppveyorDSCTests contents and publishes it.
-    If the directory does not exist, a warning is written and the publish step is skipped.
-    .Parameter artifacts
-    An array list to add the fully qualified build log path
-#>
-function Add-TestArtifact
-{
-    param
-    (
-        [ValidateNotNull()]
-        [System.Collections.ArrayList] $artifacts
-    )
-    $testInstallFolder = "$env:SystemDrive\AppveyorDSCTests"
-    $testArtifacts = "$env:APPVEYOR_BUILD_FOLDER\DSCTestArchive.zip"
-
-    if (Test-Path -Path $testInstallFolder)
-    {
-        Add-Type -assemblyname System.IO.Compression.FileSystem
-        [System.IO.Compression.ZipFile]::CreateFromDirectory($testInstallFolder, $testArtifacts)
-        $null = $artifacts.Add($testArtifacts)
-    }
-    else
-    {
-        Write-Warning "Skip publishing test artifacts. $testInstallFolder directory does not exist"
-    }
-}
-
 
 <#
     .Synopsis
@@ -179,17 +235,14 @@ function Publish-Artifact
 {
     Write-Output "Publishing project artifacts"
 
-    [System.Collections.ArrayList] $artifacts = [System.Collections.ArrayList]::new()
-    #Add-TestArtifact -artifacts $artifacts
-
     # Get the build.log file for each build configuration
-    [System.IO.DirectoryInfo] $repositoryRoot = Get-RepositoryRoot    
-    Add-BuildLog -artifacts $artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Release -NativeHostArch x86)
-    Add-BuildLog -artifacts $artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Debug -NativeHostArch x86)
-    Add-BuildLog -artifacts $artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Release -NativeHostArch x64)
-    Add-BuildLog -artifacts $artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Debug -NativeHostArch x64)
+    [System.IO.DirectoryInfo] $repositoryRoot = Get-RepositoryRoot
+    Add-BuildLog -artifacts $script:artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Release -NativeHostArch x86)
+    Add-BuildLog -artifacts $script:artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Debug -NativeHostArch x86)
+    Add-BuildLog -artifacts $script:artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Release -NativeHostArch x64)
+    Add-BuildLog -artifacts $script:artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Debug -NativeHostArch x64)
 
-    foreach ($artifact in $artifacts)
+    foreach ($artifact in $script:artifacts)
     {
         Write-Output "Publishing $artifact as Appveyor artifact"
         # NOTE: attempt to publish subsequent artifacts even if the current one fails
@@ -232,12 +285,12 @@ function Run-OpenSSHTests
   [CmdletBinding()]
   param
   (    
-      [string] $testResultsFile = "$env:SystemDrive\AppveyorOpenSSHTests\TestResults.xml",
-      [string] $testInstallFolder = "$env:SystemDrive\AppveyorOpenSSHTests",       
+      [string] $testResultsFile = "$env:SystemDrive\OpenSSH\TestResults.xml",
+      [string] $testInstallFolder = "$env:SystemDrive\OpenSSH",       
       [switch] $uploadResults
   )
   # Run all tests.
-  <#Run-OpenSSHPesterTest -testRoot  "$testInstallFolder\regress\pesterTests\" -outputXml $testResultsFile
+  Run-OpenSSHPesterTest -testRoot $testInstallFolder -outputXml $testResultsFile
 
   # UploadResults if specified.
   if ($uploadResults -and $env:APPVEYOR_JOB_ID)
@@ -255,5 +308,5 @@ function Run-OpenSSHTests
   if ($Error.Count -gt 0) 
   { 
       $Error| Out-File "$env:SystemDrive\AppveyorDSCTests\TestError.txt" -Append
-  }#>
+  }
 }
