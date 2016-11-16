@@ -1,7 +1,6 @@
 ﻿$ErrorActionPreference = 'Stop'
 Import-Module $PSScriptRoot\build.psm1
 $repoRoot = Get-RepositoryRoot
-[System.Collections.ArrayList] $script:artifacts = [System.Collections.ArrayList]::new()
 
 # Sets a build variable
 Function Set-BuildVariable
@@ -92,7 +91,7 @@ function Install-TestDependencies
 }
 <#
     .Synopsis
-    Deploy all required files to a test location.
+    Deploy all required files to a location and install the binaries
 #>
 function Install-OpenSSH
 {
@@ -102,7 +101,10 @@ function Install-OpenSSH
         [string] $OpenSSHDir = "$env:SystemDrive\OpenSSH",
 
         [ValidateSet('Debug', 'Release')]
-        [string]$Configuration = "Debug"
+        [string]$Configuration = "Debug",
+
+        [ValidateSet('x86', 'x64', '')]
+        [string]$NativeHostArch = ""
     )
 
     Build-Win32OpenSSHPackage @PSBoundParameters
@@ -116,6 +118,26 @@ function Install-OpenSSH
     Set-Service sshd -StartupType Automatic 
     Set-Service ssh-agent -StartupType Automatic     
 }
+
+<#
+    .Synopsis
+    uninstalled sshd and sshla
+#>
+function UnInstall-OpenSSH
+{
+    [CmdletBinding()]
+    param
+    (    
+        [string] $OpenSSHDir = "$env:SystemDrive\OpenSSH"
+    )    
+
+    Push-Location $OpenSSHDir
+    
+    Stop-Service sshd    
+    &( "$OpenSSHDir\uninstall-sshd.ps1")
+    &( "$OpenSSHDir\uninstall-sshlsa.ps1")    
+}
+
 <#
     .Synopsis
     Deploy all required files to build a package and create zip file.
@@ -128,27 +150,44 @@ function Build-Win32OpenSSHPackage
         [string] $OpenSSHDir = "$env:SystemDrive\OpenSSH",
 
         [ValidateSet('Debug', 'Release')]
-        [string]$Configuration = "Debug"
+        [string]$Configuration = "Debug",
+
+        [ValidateSet('x86', 'x64', '')]
+        [string]$NativeHostArch = ""
     )
 
-    if (-not (Test-Path -Path $OpenSSHTestDir -PathType Container))
+    if (-not (Test-Path -Path $OpenSSHDir -PathType Container))
     {
-        New-Item -Path $OpenSSHTestDir -ItemType Directory -Force -ErrorAction Stop
+        New-Item -Path $OpenSSHDir -ItemType Directory -Force -ErrorAction Stop
     }
 
     [string] $platform = $env:PROCESSOR_ARCHITECTURE
-    $folderName = "Win32"
-    if($platform -ieq "AMD64")
+    if(-not [String]::IsNullOrEmpty($NativeHostArch))
     {
-        $folderName = "x64"
+        $folderName = $NativeHostArch
+        if($NativeHostArch -eq 'x86')
+        {
+            $folderName = "Win32"
+        }
+    }
+    else
+    {
+        if($platform -ieq "AMD64")
+        {
+            $folderName = "x64"
+        }
+        else
+        {
+            $folderName = "Win32"
+        }
     }
 
     [System.IO.DirectoryInfo] $repositoryRoot = Get-RepositoryRoot
     $sourceDir = Join-Path $repositoryRoot.FullName -ChildPath "bin\$folderName\$Configuration"
-    Copy-Item -Path "$sourceDir\*" -Destination $OpenSSHTestDir -Include *.exe,*.dll,*pdb -Force -ErrorAction Stop
+    Copy-Item -Path "$sourceDir\*" -Destination $OpenSSHDir -Include *.exe,*.dll,*.pdb -Force -ErrorAction Stop
     $sourceDir = Join-Path $repositoryRoot.FullName -ChildPath "contrib\win32\openssh"
-    Copy-Item -Path "$sourceDir\*" -Destination $OpenSSHTestDir -Include *.ps1,sshd_config -Exclude AnalyzeCodeDiff.ps1 -Force -ErrorAction Stop    
-    Copy-Item -Path "$($repositoryRoot.FullName)\sshd_config" -Destination $OpenSSHTestDir -Force -ErrorAction Stop
+    Copy-Item -Path "$sourceDir\*" -Destination $OpenSSHDir -Include *.ps1,sshd_config -Exclude AnalyzeCodeDiff.ps1 -Force -ErrorAction Stop    
+    Copy-Item -Path "$($repositoryRoot.FullName)\sshd_config" -Destination $OpenSSHDir -Force -ErrorAction Stop
 
     $packageName = "rktools.2003"
     $rktoolsPath = "${env:ProgramFiles(x86)}\Windows Resource Kits\Tools\ntrights.exe"
@@ -158,14 +197,13 @@ function Build-Win32OpenSSHPackage
         choco install $rktoolsPath -y --force
     }
 
-    Copy-Item -Path $rktoolsPath -Destination $OpenSSHTestDir -Force -ErrorAction Stop
+    Copy-Item -Path $rktoolsPath -Destination $OpenSSHDir -Force -ErrorAction Stop
 
     $package = "$env:APPVEYOR_BUILD_FOLDER\Win32OpenSSH$Configuration$folderName.zip"
-    Remove-Item -Path $package -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "$env:APPVEYOR_BUILD_FOLDER\Win32OpenSSH*.zip" -Force -ErrorAction SilentlyContinue
 
     Add-Type -assemblyname System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::CreateFromDirectory($OpenSSHDir, $package)
-    $null = $script:artifacts.Add($package)    
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($OpenSSHDir, $package)    
 }
 
 <#
@@ -226,6 +264,35 @@ function Add-BuildLog
     }
 }
 
+<#
+    .Synopsis
+    Publishes package build artifacts.    
+    .Parameter artifacts
+    An array list to add the fully qualified build log path
+    .Parameter packageFile
+    Path to the package
+#>
+function Add-PackageArtifact
+{
+    param
+    (
+        [ValidateNotNull()]
+        [System.Collections.ArrayList] $artifacts,
+
+        [string] $packageFile = "$env:APPVEYOR_BUILD_FOLDER\Win32OpenSSH*.zip"
+    )    
+    
+    $files = Get-Item -Path $packageFile
+    if ($files -ne $null)
+    {        
+        $testArtifacts | % { $artifacts.Add($_.FullName) }
+    }
+    else
+    {
+        Write-Warning "Skip publishing package artifacts. $env:APPVEYOR_BUILD_FOLDER\Win32OpenSSH*.zip does not exist"
+    }
+}
+
 
 <#
     .Synopsis
@@ -234,15 +301,17 @@ function Add-BuildLog
 function Publish-Artifact
 {
     Write-Output "Publishing project artifacts"
+    [System.Collections.ArrayList] $artifacts = [System.Collections.ArrayList]::new()
+    Add-PackageArtifact -artifacts $artifacts -packageFile "$env:APPVEYOR_BUILD_FOLDER\Win32OpenSSH*.zip"
 
     # Get the build.log file for each build configuration
     [System.IO.DirectoryInfo] $repositoryRoot = Get-RepositoryRoot
-    Add-BuildLog -artifacts $script:artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Release -NativeHostArch x86)
-    Add-BuildLog -artifacts $script:artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Debug -NativeHostArch x86)
-    Add-BuildLog -artifacts $script:artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Release -NativeHostArch x64)
-    Add-BuildLog -artifacts $script:artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Debug -NativeHostArch x64)
+    Add-BuildLog -artifacts $artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Release -NativeHostArch x86)
+    Add-BuildLog -artifacts $artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Debug -NativeHostArch x86)
+    Add-BuildLog -artifacts $artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Release -NativeHostArch x64)
+    Add-BuildLog -artifacts $artifacts -buildLog (Get-BuildLogFile -root $repositoryRoot.FullName -Configuration Debug -NativeHostArch x64)
 
-    foreach ($artifact in $script:artifacts)
+    foreach ($artifact in $artifacts)
     {
         Write-Output "Publishing $artifact as Appveyor artifact"
         # NOTE: attempt to publish subsequent artifacts even if the current one fails
@@ -307,6 +376,6 @@ function Run-OpenSSHTests
   # Writing out warning when the $Error.Count is non-zero. Tests Should clean $Error after success.
   if ($Error.Count -gt 0) 
   { 
-      $Error| Out-File "$env:SystemDrive\AppveyorDSCTests\TestError.txt" -Append
+      $Error| Out-File "$env:SystemDrive\OpenSSH\TestError.txt" -Append
   }
 }
