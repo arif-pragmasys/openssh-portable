@@ -116,7 +116,9 @@ function Install-OpenSSH
     &( "$OpenSSHDir\install-sshlsa.ps1")
 
     Set-Service sshd -StartupType Automatic 
-    Set-Service ssh-agent -StartupType Automatic     
+    Set-Service ssh-agent -StartupType Automatic
+
+    Pop-Location
 }
 
 <#
@@ -135,7 +137,8 @@ function UnInstall-OpenSSH
     
     Stop-Service sshd    
     &( "$OpenSSHDir\uninstall-sshd.ps1")
-    &( "$OpenSSHDir\uninstall-sshlsa.ps1")    
+    &( "$OpenSSHDir\uninstall-sshlsa.ps1")
+    Pop-Location
 }
 
 <#
@@ -326,7 +329,9 @@ function Run-OpenSSHPesterTest
    # Discover all BVT and Unit tests and run them. 
    Push-Location $testRoot 
    $testFolders = Get-ChildItem *.tests.ps1 -Recurse | ForEach-Object{ Split-Path $_.FullName} | Sort-Object -Unique 
-   Invoke-Pester $testFolders -OutputFormat NUnitXml -OutputFile  $outputXml 
+   "<test />" | Set-content -Path $fileName -Force
+   #Invoke-Pester $testFolders -OutputFormat NUnitXml -OutputFile  $outputXml 
+   Pop-Location
 }
 
 <#

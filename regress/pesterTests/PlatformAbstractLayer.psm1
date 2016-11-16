@@ -145,6 +145,7 @@ Class Machine
         $this.password = ConvertTo-SecureString -String $this.localAdminPassword -AsPlainText -Force
         $this.AddAdminUser($this.localAdminUserName, $this.password)
         
+        $this.SetupServerRemoting([Protocol]::WSMAN)
         $this.localUserprofilePath = $this.GetUserProfileLocation($this)
         $sshPath = join-path $($this.localUserprofilePath)  ".ssh"
         if(-not (Test-path $sshPath -PathType Container))
@@ -288,7 +289,7 @@ Class Machine
     }
 
     [string] GetUserProfileLocation([Machine] $remote ) {        
-        #load the profile to create the profile folder    
+        #load the profile to create the profile folder        
         $pscreds = [System.Management.Automation.PSCredential]::new($($remote.MachineName) + "\" + $($remote.localAdminUserName), $($remote.password))
         $ret = Invoke-Command -Credential $pscreds -ComputerName $($remote.MachineName) -command {$env:userprofile}
         return $ret
