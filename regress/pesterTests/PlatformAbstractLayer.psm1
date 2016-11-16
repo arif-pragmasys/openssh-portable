@@ -107,6 +107,11 @@ Class Machine
 
     [void] InitializeClient() {
         $this.ClientKeyDirectory = join-path ($env:USERPROFILE) ".ssh"
+        if(-not (Test-path $this.ClientKeyDirectory -PathType Container))
+        {
+            New-Item -Path $this.ClientKeyDirectory -ItemType Directory -Force -ErrorAction silentlycontinue
+        }
+
         Remove-Item -Path "$($this.ClientKeyDirectory)\*" -Force -ea silentlycontinue
 
         $this.knownHostOfCurrentUser = join-path ($env:USERPROFILE) ".ssh/known_hosts"
@@ -141,6 +146,11 @@ Class Machine
         $this.AddAdminUser($this.localAdminUserName, $this.password)
         
         $this.localUserprofilePath = $this.GetUserProfileLocation($this)
+        $sshPath = join-path $($this.localUserprofilePath)  ".ssh"
+        if(-not (Test-path $sshPath -PathType Container))
+        {
+            New-Item -Path $sshPath -ItemType Directory -Force -ErrorAction silentlycontinue
+        }
         $this.localAdminAuthorizedKeyPath = join-path $($this.localUserprofilePath)  ".ssh/authorized_keys"
         Remove-Item -Path $($this.localAdminAuthorizedKeyPath) -Force -ea silentlycontinue
 

@@ -358,6 +358,9 @@ function Run-OpenSSHTests
       [string] $testInstallFolder = "$env:SystemDrive\OpenSSH",       
       [switch] $uploadResults
   )
+
+  Deploy-OpenSSHTests -OpenSSHTestDir $testResultsFile
+
   # Run all tests.
   Run-OpenSSHPesterTest -testRoot $testInstallFolder -outputXml $testResultsFile
 
