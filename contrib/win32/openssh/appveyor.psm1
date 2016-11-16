@@ -111,7 +111,7 @@ function Install-OpenSSH
 
     Push-Location $OpenSSHDir 
     &( "$OpenSSHDir\install-sshd.ps1")
-    ssh-keygen.exe -A
+    .\ssh-keygen.exe -A
     Start-Service ssh-agent
     &( "$OpenSSHDir\install-sshlsa.ps1")
 
@@ -215,7 +215,7 @@ function Deploy-OpenSSHTests
     [CmdletBinding()]
     param
     (    
-        [string] $OpenSSHTestDir = "$env:SystemDrive\OpenSSH"
+        [string] $OpenSSHTestDir = "$env:SystemDrive\OpenSSH\PSTests"
     )
 
     if (-not (Test-Path -Path $OpenSSHTestDir -PathType Container))
