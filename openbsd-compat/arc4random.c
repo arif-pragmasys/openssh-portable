@@ -114,6 +114,7 @@ _rs_stir(void)
 		    (unsigned long)ERR_get_error());
 #else
 #ifdef WINDOWS
+	/* TODO - replace rand() with a more secure generator */
 	for(int i =0;i<sizeof(rnd);i++)
 		rnd[i] = 48 + rand() % 10;
 #else
