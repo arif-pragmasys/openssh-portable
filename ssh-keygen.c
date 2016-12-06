@@ -260,7 +260,6 @@ ask_filename(struct passwd *pw, const char *prompt)
 			fatal("bad key type");
 		}
 	}
-
 	snprintf(identity_file, sizeof(identity_file),
 		"%s/%s", pw->pw_dir, name);
 	#ifdef WINDOWS
