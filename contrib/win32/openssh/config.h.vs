@@ -80,7 +80,7 @@
 /* #undef BROKEN_SNPRINTF */
 
 /* tcgetattr with ICANON may hang */
-/* #undef BROKEN_TCGETATTR_ICANON */
+#define BROKEN_TCGETATTR_ICANON 1
 
 /* updwtmpx is broken (if present) */
 /* #undef BROKEN_UPDWTMPX */
@@ -859,7 +859,7 @@
 /* #undef HAVE_SETRLIMIT */
 
 /* Define to 1 if you have the `setsid' function. */
-/* #undef HAVE_SETSID */
+#define HAVE_SETSID 1
 
 /* Define to 1 if you have the `setutent' function. */
 /* #undef HAVE_SETUTENT */
@@ -1679,14 +1679,6 @@
 
 #define WIN32_ZLIB_NO 1
 #define USE_MSCNG 1
-
-#ifndef ssize_t
-#ifdef _WIN64
-typedef __int64		 ssize_t;
-#else
-typedef long ssize_t;
-#endif
-#endif
 
 #define HAVE_STRTOULL 1
 #define HAVE_USLEEP 1
