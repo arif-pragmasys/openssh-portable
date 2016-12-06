@@ -78,6 +78,16 @@ chop(char *s)
 
 }
 
+#ifdef WINDOWS
+/* convert from unix to win file path */
+void
+convertToWinFilePath(char *s)
+{
+	for (char* p = s; p = strchr(p, '/'); ++p)
+		*p = '\\';
+}
+#endif
+
 /* set/unset filedescriptor to non-blocking */
 int
 set_nonblock(int fd)
