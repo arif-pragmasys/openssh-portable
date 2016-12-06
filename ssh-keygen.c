@@ -220,8 +220,13 @@ type_bits_valid(int type, const char *name, u_int32_t *bitsp)
 	else if (type != KEY_ECDSA && type != KEY_ED25519 && *bitsp < 1024)
 		fatal("Key must at least be 1024 bits");
 	else if (type == KEY_ECDSA && sshkey_ecdsa_bits_to_nid(*bitsp) == -1)
+#ifdef OPENSSL_HAS_NISTP521
 		fatal("Invalid ECDSA key length - valid lengths are "
 		    "256, 384 or 521 bits");
+#else
+		fatal("Invalid ECDSA key length - valid lengths are "
+			"256 or 384 bits");
+#endif
 #endif
 }
 
